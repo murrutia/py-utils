@@ -1,6 +1,6 @@
 import inspect
 import os
-from click import Path
+from pathlib import Path
 
 
 def demultiply_value(value: int | float) -> str:
