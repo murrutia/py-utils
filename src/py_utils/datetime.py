@@ -2,8 +2,7 @@ from datetime import datetime
 import os
 from zoneinfo import ZoneInfo
 import re
-
-from click import Path
+from pathlib import Path
 
 DATETIME_HUMAN_FORMAT = os.getenv("DATETIME_HUMAN_FORMAT", "%Y-%m-%d %H:%M:%S")
 
