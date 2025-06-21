@@ -17,4 +17,5 @@ build-backend = "hatchling.build"
 dev = [
     "black>=25.1.0",
     "python-dateutil>=2.9.0.post0",
+    "tqdm>=4.67.1",
 ]
