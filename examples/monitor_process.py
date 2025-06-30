@@ -10,17 +10,26 @@ import time
 
 import psutil
 
-from py_utils.misc import CursesContext, create_progress_bar, percent_to_rgb
-from py_utils.process import ProcessCpuPercents, find_process_by_id_or_name
+from py_utils.misc import CursesContext, create_progress_bar
+from py_utils.process import (
+    GlobalCpuMonitor,
+    ProcessCpuMonitor,
+    find_process_by_id_or_name,
+)
 
 
 class TopLikeDisplay:
     """Gère l'affichage pour la surveillance CPU de type 'top'."""
 
-    def __init__(self, cc: CursesContext, pid: int, process_name: str):
+    def __init__(self, cc: CursesContext, pid: int, process_name: str, lock: threading.Lock):
         self.cc = cc
         self.pid = pid
         self.process_name = process_name
+        self.lock = lock
+        self.cpu_global: float = 0.0
+        self.cpu_cores: list[float] = [0.0 for i in range(psutil.cpu_count())]
+        self.proc_cpu_percent: float = 0.0
+
         self._init_color_pairs()
 
     def _init_color_pairs(self):
@@ -39,31 +48,43 @@ class TopLikeDisplay:
             return self.pair_yellow
         return self.pair_green
 
-    def on_started(self, message: str):
+    def on_update_cpu(self, cpu_global: float, cpu_percents: list[float]):
+        """Met à jour et affiche les informations CPU globales."""
+        with self.lock:
+            self.cpu_global = cpu_global
+            self.cpu_cores = cpu_percents
+
+    def on_started(self, pid: int, name: str):
         """Affiche le message de démarrage de la surveillance."""
-        self.cc.erase()
-        y = 0
-        self.cc.addstr(y, 0, f"Surveillance du processus {self.process_name} (PID: {self.pid})...")
-        y += 1
-        self.cc.addstr(y, 0, message)
-        y += 1
-        self.cc.addstr(y, 0, "-" * 80)
-        self.cc.refresh()
+        with self.lock:
+            self.cc.erase()
+            y = 0
+            self.cc.addstr(y, 0, f"Surveillance du processus {name} (PID: {pid})...")
+            y += 1
+            self.cc.addstr(y, 0, "-" * 80)
+            self.cc.refresh()
 
     def on_finished(self, success: bool, message: str):
         """Affiche le message de fin de surveillance."""
-        self.cc.erase()
-        y = 0
-        self.cc.addstr(y, 0, "Surveillance terminée : ")
-        if success:
-            self.cc.addstr(y, 24, "SUCCÈS", self.pair_green)
-            self.cc.addstr(y, 32, f" - {message}")
-        else:
-            self.cc.addstr(y, 24, "ÉCHEC", self.pair_red)
-            self.cc.addstr(y, 31, f" - {message}")
-        self.cc.refresh()
+        with self.lock:
+            self.cc.erase()
+            y = 0
+            self.cc.addstr(y, 0, "Surveillance terminée : ")
+            if success:
+                self.cc.addstr(y, 24, "SUCCÈS", self.pair_green)
+                self.cc.addstr(y, 32, f" - {message}")
+            else:
+                self.cc.addstr(y, 24, "ÉCHEC", self.pair_red)
+                self.cc.addstr(y, 31, f" - {message}")
+            self.cc.refresh()
+            time.sleep(2)
 
-    def on_update(self, proc_cpu_percent: float, cpu_global: float, cpu_percents: list[float]):
+    def on_update(self, proc_cpu_percent: float):
+        with self.lock:
+            self.proc_cpu_percent = proc_cpu_percent
+            self._draw()
+
+    def _draw(self):
         """Met à jour et affiche les informations CPU."""
         self.cc.erase()
         y = 0  # Toujours commencer à la ligne 0 après un erase()
@@ -78,15 +99,15 @@ class TopLikeDisplay:
         y += 1
 
         # --- Affichage combiné des cœurs et de la barre verticale globale ---
-        num_cores = len(cpu_percents)
+        num_cores = len(self.cpu_cores)
         cores_per_line = 2  # Ajustez pour s'adapter à la largeur de votre terminal
         num_core_lines = (num_cores + cores_per_line - 1) // cores_per_line
 
         # --- Global CPU usage ---
-        cpu_pair = self._percent_to_pair(cpu_global)
-        cpu_bar_str = create_progress_bar(cpu_global, width=50)
+        cpu_pair = self._percent_to_pair(self.cpu_global)
+        cpu_bar_str = create_progress_bar(self.cpu_global, width=50)
         self.cc.addstr(y, 0, "Utilisation CPU globale : ")
-        self.cc.addstr(y, 30, f"{cpu_global:.2f}%", cpu_pair)
+        self.cc.addstr(y, 30, f"{self.cpu_global:.2f}%", cpu_pair)
         self.cc.addstr(y, 38, f" [{cpu_bar_str}]", cpu_pair)
         y += 1
 
@@ -102,7 +123,7 @@ class TopLikeDisplay:
             for j in range(cores_per_line):
                 core_idx = i * cores_per_line + j
                 if core_idx < num_cores:
-                    core_percent = cpu_percents[core_idx]
+                    core_percent = self.cpu_cores[core_idx]
                     bar_str = create_progress_bar(core_percent, width=10)
                     pair = self._percent_to_pair(core_percent)
 
@@ -116,10 +137,12 @@ class TopLikeDisplay:
         y += 1
 
         # --- Barre horizontale pour le processus spécifique ---
-        proc_pair = self._percent_to_pair(proc_cpu_percent)
-        proc_bar_str = create_progress_bar(proc_cpu_percent, width=50)
+        proc_pair = self._percent_to_pair(self.proc_cpu_percent)
+        proc_bar_str = create_progress_bar(self.proc_cpu_percent, width=50)
         self.cc.addstr(y, 0, f"CPU Processus ({self.process_name}) : ")
-        self.cc.addstr(y, 30, f"{proc_cpu_percent:.2f}%", proc_pair)  # Correction: Utiliser y ici
+        self.cc.addstr(
+            y, 30, f"{self.proc_cpu_percent:.2f}%", proc_pair
+        )  # Correction: Utiliser y ici
         self.cc.addstr(y, 38, f" [{proc_bar_str}]", proc_pair)
         y += 1
 
@@ -159,28 +182,35 @@ def main():
 
     with CursesContext() as cc:
 
-        display = TopLikeDisplay(cc, process_info.pid, process_info.name())
-        monitor = ProcessCpuPercents(process_info.pid, interval=args.interval)
+        display_lock = threading.Lock()
+
+        display = TopLikeDisplay(cc, process_info.pid, process_info.name(), display_lock)
+        proc_monitor = ProcessCpuMonitor(process_info.pid, interval=args.interval)
+        cpu_monitor = GlobalCpuMonitor(interval=args.interval)
 
         # Attache les callbacks de l'afficheur au moniteur
-        monitor.add_handler_on("started", display.on_started)
-        monitor.add_handler_on("finished", display.on_finished)
-        monitor.add_handler_on("updated", display.on_update)
+        proc_monitor.add_handler_on("started", display.on_started)
+        proc_monitor.add_handler_on("finished", display.on_finished)
+        proc_monitor.add_handler_on("updated", display.on_update)
+        cpu_monitor.add_handler_on("updated", display.on_update_cpu)
 
-        monitor_thread = threading.Thread(target=monitor.start)
+        proc_monitor_thread = threading.Thread(target=proc_monitor.start, daemon=True)
+        cpu_monitor_thread = threading.Thread(target=cpu_monitor.start, daemon=True)
 
         # Gère le signal Ctrl+C pour un arrêt propre
         def signal_handler(sig, frame):
             # Ne pas printer ici pour éviter de corrompre l'affichage
-            monitor.stop()
+            proc_monitor.stop()
+            cpu_monitor.stop()
 
         signal.signal(signal.SIGINT, signal_handler)
 
-        monitor_thread.start()
+        proc_monitor_thread.start()
+        cpu_monitor_thread.start()
         # Le thread principal attend simplement que le thread de surveillance se termine.
         # Il se terminera soit parce que monitor.stop() a été appelé (via Ctrl+C),
         # soit parce que le processus surveillé a disparu, ce qui termine la boucle du moniteur.
-        monitor_thread.join()
+        proc_monitor_thread.join()
 
 
 if __name__ == "__main__":
