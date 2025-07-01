@@ -61,7 +61,7 @@ def which_path(filename: Path | str) -> Path | None:
     return None
 
 
-def percent_to_rgb(percent: float) -> tuple[int, int, int]:
+def percent_to_rgb(percent: float, return_type: str = "tuple") -> tuple[int, int, int]:
     """
     Retourne un tuple de couleur RGB (0-255) basé sur un pourcentage (0-100).
     La couleur va du vert (faible pourcentage) au rouge (pourcentage élevé).
@@ -79,7 +79,14 @@ def percent_to_rgb(percent: float) -> tuple[int, int, int]:
     green = int(max(0, min(1, percent_diff * 2)) * 255)
     blue = 0
 
-    return (red, green, blue)
+    return_type = return_type.lower()
+    match return_type:
+        case "hexa" | "hexadecimal":
+            return f"#{red:02x}{green:02x}{blue:02x}"
+        case "deci" | "decimal":
+            return f"rgb({red}, {green}, {blue})"
+        case _:
+            return (red, green, blue)
 
 
 def create_progress_bar(percent: float, width: int = 10) -> str:
