@@ -440,7 +440,7 @@ class SystemSummaryView(QWidget):
         self.ram_meter.setStyleSheet(f"QProgressBar::chunk {{ background-color: {ram_color}; }}")
         used_gb = vmem.used / (1024**3)
         total_gb = vmem.total / (1024**3)
-        self.ram_value.setText(f"{used_gb:.1f}/{total_gb:.1f} GB ({vmem.percent:.0f}%)")
+        self.ram_value.setText(f"{used_gb:.2f}/{total_gb:.1f} GB ({vmem.percent:.0f}%)")
         self.ram_value.setStyleSheet(f"color: {ram_color};")
 
         # Mise à jour du SWAP
@@ -452,7 +452,7 @@ class SystemSummaryView(QWidget):
             )
             used_gb = swap.used / (1024**3)
             total_gb = swap.total / (1024**3)
-            self.swap_value.setText(f"{used_gb:.1f}/{total_gb:.1f} GB ({swap.percent:.0f}%)")
+            self.swap_value.setText(f"{used_gb:.2f}/{total_gb:.1f} GB ({swap.percent:.0f}%)")
             self.swap_value.setStyleSheet(f"color: {swap_color};")
         else:
             self.swap_value.setText("N/A")

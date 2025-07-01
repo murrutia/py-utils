@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QProgressBar,
+    QPushButton,
     QToolTip,
     QVBoxLayout,
     QWidget,
@@ -270,8 +271,8 @@ class MainWindow(QMainWindow):
         self.worker_process.start()
 
         # --- Monitoring Système (CPU + Mémoire) ---
-        # On crée les ViewModels nécessaires
-        self.global_cpu_vm = GlobalCpuMonitorViewModel(interval=0.5)
+        # On crée UNE SEULE instance du ViewModel pour le CPU global
+        self.global_cpu_vm = GlobalCpuMonitorViewModel(interval=0.2)
         self.memory_vm = MemoryMonitorViewModel(interval=2.0)
 
         # On crée le widget de synthèse et on lui passe les VMs
@@ -281,8 +282,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.system_summary_view)
 
         # --- Monitoring CPU Global ---
-        # On crée UNE SEULE instance du ViewModel pour le CPU global
-        self.global_cpu_vm = GlobalCpuMonitorViewModel(interval=0.2)
 
         # Vue pour le CPU Global
         self.cpu_global_view = GlobalCpuMonitorView(vm=self.global_cpu_vm)
@@ -299,13 +298,26 @@ class MainWindow(QMainWindow):
         self.cores_heatmap.setFixedSize(100, 40)
         layout.addWidget(self.cores_heatmap)
 
-        self.cpu_sparkline = CompactCpuSparklineView(vm=self.global_cpu_vm)
+        self.cpu_sparkline = CompactCpuSparklineView(vm=self.global_cpu_vm, history_length=100)
         layout.addWidget(self.cpu_sparkline)
 
         # --- Monitoring Processus Spécifique ---
+        process_layout = QHBoxLayout()
+        layout.addLayout(process_layout)
+
         process_vm = ProcessCpuMonitorViewModel(process_identifier=self.worker_process.pid)
         self.cpu_process_view = ProcessCpuMonitorView(vm=process_vm)
-        layout.addWidget(self.cpu_process_view)
+        process_layout.addWidget(self.cpu_process_view, 1)  # Donne plus de place à la vue
+
+        # Ajout des boutons de contrôle
+        self.pause_button = QPushButton("Pause")
+        self.pause_button.clicked.connect(self.on_pause_process)
+        process_layout.addWidget(self.pause_button)
+
+        self.resume_button = QPushButton("Resume")
+        self.resume_button.clicked.connect(self.on_resume_process)
+        self.resume_button.setEnabled(False)  # Le processus démarre en cours d'exécution
+        process_layout.addWidget(self.resume_button)
 
         # On démarre les moniteurs
         self.global_cpu_vm.start()
@@ -314,6 +326,30 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Exemple utilisation ProcCpuPercents")
         self.setGeometry(100, 100, 400, 600)
+
+    def on_pause_process(self):
+        """Met en pause le processus worker."""
+        try:
+            if self.worker_process and self.worker_process.is_alive():
+                p = psutil.Process(self.worker_process.pid)
+                p.suspend()
+                self.pause_button.setEnabled(False)
+                self.resume_button.setEnabled(True)
+                print("Processus worker mis en pause.")
+        except psutil.NoSuchProcess:
+            print("Le processus worker n'existe plus.")
+
+    def on_resume_process(self):
+        """Reprend l'exécution du processus worker."""
+        try:
+            if self.worker_process and self.worker_process.is_alive():
+                p = psutil.Process(self.worker_process.pid)
+                p.resume()
+                self.pause_button.setEnabled(True)
+                self.resume_button.setEnabled(False)
+                print("Processus worker relancé.")
+        except psutil.NoSuchProcess:
+            print("Le processus worker n'existe plus.")
 
     def closeEvent(self, event: QCloseEvent):
         """S'assure que tous les threads et processus sont bien arrêtés."""
