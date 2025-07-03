@@ -64,10 +64,13 @@ class BaseMonitor(abc.ABC):
     _setup et _run_loop.
     """
 
-    def __init__(self, interval: float = 1.0):
+    def __init__(self, interval: float = 1.0, history_length: int = 0):
         self.interval = interval
         self._handlers: dict[MonitorEvent, list[Callable]] = {event: [] for event in MonitorEvent}
         self._is_running = False
+        self.history_length = history_length
+        # Initialise un deque avec une taille max si history_length > 0, sinon None
+        self.history = deque(maxlen=self.history_length) if self.history_length > 0 else None
 
     @abc.abstractmethod
     def _setup(self):
@@ -118,11 +121,15 @@ class BaseMonitor(abc.ABC):
 
     def _apply_handlers_on(self, event_type: MonitorEvent, *args, **kwargs):
         """Exécute tous les handlers pour un type d'événement spécifique."""
+        # Si l'historique est activé et que c'est un événement de mise à jour,
+        # on stocke les données.
+        if event_type == MonitorEvent.UPDATED and self.history is not None:
+            self.history.append(args)
         for handler in self._handlers[event_type]:
             handler(*args, **kwargs)
 
 
-class GlobalCpuMonitor(BaseMonitor):
+class CpuCoresMonitor(BaseMonitor):
     """Observation de l'utilisation globale du CPU du système.
 
     Les handlers pour les différents événements doivent avoir les signatures suivantes :
@@ -136,7 +143,9 @@ class GlobalCpuMonitor(BaseMonitor):
     - MonitorEvent.FINISHED: `Callable[[bool, str], None]`
     """
 
-    def __init__(self, interval: float = 0.3, smoothing_duration_s: float = 1.0):
+    def __init__(
+        self, interval: float = 0.3, smoothing_duration_s: float = 1.0, history_length: int = 0
+    ):
         """
         Initialise le moniteur de CPU global.
 
@@ -144,8 +153,9 @@ class GlobalCpuMonitor(BaseMonitor):
             interval (float): Intervalle de mise à jour en secondes.
             smoothing_duration_s (float): Durée en secondes pour la moyenne mobile.
                                           Mettre à 0 pour désactiver le lissage.
+            history_length (int): Nombre de points de données à conserver dans l'historique. 0 pour désactiver.
         """
-        super().__init__(interval)
+        super().__init__(interval, history_length)
         # Calcule le nombre d'échantillons nécessaires pour couvrir la durée de lissage
         self._smoothing_window = max(1, round(smoothing_duration_s / self.interval))
         self._global_history = deque(maxlen=self._smoothing_window)
@@ -161,7 +171,13 @@ class GlobalCpuMonitor(BaseMonitor):
         self._per_cpu_history = [deque(maxlen=self._smoothing_window) for _ in range(num_cores)]
         for core_history in self._per_cpu_history:
             core_history.extend([0.0] * self._smoothing_window)
+
         self._apply_handlers_on(MonitorEvent.STARTED)
+
+        # Pré-remplir l'historique principal avec des zéros pour que les vues (sparkline) aient une taille fixe dès le départ.
+        if self.history is not None:
+            padding_element = (0.0, [0.0] * num_cores)
+            self.history.extend([padding_element] * self.history_length)
 
     def _run_loop(self):
         """Boucle de surveillance pour le CPU global."""
@@ -189,6 +205,12 @@ class GlobalCpuMonitor(BaseMonitor):
             # Émettre les valeurs lissées
             self._apply_handlers_on(MonitorEvent.UPDATED, smoothed_global, smoothed_per_cpu)
 
+    def get_cpu_history(self):
+        return [a for a, b in self.history]
+
+    def get_cores_history(self):
+        return [b for a, b in self.history]
+
 
 class ProcessCpuMonitor(BaseMonitor):
     """Observation de l'utilisation du CPU d'un processus spécifique.
@@ -199,8 +221,8 @@ class ProcessCpuMonitor(BaseMonitor):
     - MonitorEvent.FINISHED: `Callable[[bool, str], None]`
     """
 
-    def __init__(self, pid: int, interval: float = 0.3):
-        super().__init__(interval)
+    def __init__(self, pid: int, interval: float = 0.3, history_length: int = 0):
+        super().__init__(interval, history_length)
         self._pid = pid
         self._proc: psutil.Process | None = None
         self._n_cpu = psutil.cpu_count()
@@ -230,6 +252,3 @@ class ProcessCpuMonitor(BaseMonitor):
     def get_pid(self) -> int:
         """Retourne le PID du processus surveillé."""
         return self._pid
-
-
-cpu_monitor = GlobalCpuMonitor()

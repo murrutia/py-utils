@@ -1,3 +1,4 @@
+import dis
 import multiprocessing
 import sys
 
@@ -17,17 +18,17 @@ from PySide6.QtWidgets import (
 )
 
 from py_utils.misc import percent_to_rgb
-from py_utils.process import (
-    GlobalCpuMonitor,
+from py_utils.stats import (
+    CpuCoresMonitor,
     ProcessCpuMonitor,
     find_process_by_id_or_name,
 )
 from py_utils.widgets import (
     CompactCoresHeatmapView,
     CompactCoresMonitorView,
+    CompactCpuCoresMonitorView,
     CompactCpuSparklineView,
-    CompactGlobalCpuMonitorView,
-    GlobalCpuMonitorViewModel,
+    CpuCoresMonitorViewModel,
     MemoryMonitorViewModel,
     SystemSummaryView,
 )
@@ -171,8 +172,8 @@ class ProcessCpuMonitorView(QWidget):
         )
 
 
-class GlobalCpuMonitorView(QWidget):
-    def __init__(self, vm: GlobalCpuMonitorViewModel):
+class CpuCoresMonitorView(QWidget):
+    def __init__(self, vm: CpuCoresMonitorViewModel):
         super().__init__()
         self.vm = vm
 
@@ -271,8 +272,12 @@ class MainWindow(QMainWindow):
         self.worker_process.start()
 
         # --- Monitoring Système (CPU + Mémoire) ---
-        # On crée UNE SEULE instance du ViewModel pour le CPU global
-        self.global_cpu_vm = GlobalCpuMonitorViewModel(interval=0.2)
+        # On crée UNE SEULE instance du ViewModel pour le CPU global.
+        # On active l'historique pour le sparkline en passant history_length au ViewModel.
+        history_length_for_sparkline = 300
+        self.global_cpu_vm = CpuCoresMonitorViewModel(
+            interval=0.2, history_length=history_length_for_sparkline
+        )
         self.memory_vm = MemoryMonitorViewModel(interval=2.0)
 
         # On crée le widget de synthèse et on lui passe les VMs
@@ -284,11 +289,16 @@ class MainWindow(QMainWindow):
         # --- Monitoring CPU Global ---
 
         # Vue pour le CPU Global
-        self.cpu_global_view = GlobalCpuMonitorView(vm=self.global_cpu_vm)
-        layout.addWidget(self.cpu_global_view)
+        # self.cpu_global_view = CpuCoresMonitorView(vm=self.global_cpu_vm)
+        # layout.addWidget(self.cpu_global_view)
 
-        self.cpu_compact_view = CompactGlobalCpuMonitorView(vm=self.global_cpu_vm)
+        self.cpu_compact_view = CompactCpuCoresMonitorView(vm=self.global_cpu_vm)
         layout.addWidget(self.cpu_compact_view)
+
+        self.cpu_compact_view_vert = CompactCpuCoresMonitorView(
+            vm=self.global_cpu_vm, orientation=Qt.Vertical
+        )
+        layout.addWidget(self.cpu_compact_view_vert)
 
         self.cores_compact_view = CompactCoresMonitorView(vm=self.global_cpu_vm)
         # self.cores_compact_view.setMaximumWidth(200)
@@ -298,8 +308,16 @@ class MainWindow(QMainWindow):
         self.cores_heatmap.setFixedSize(100, 40)
         layout.addWidget(self.cores_heatmap)
 
-        self.cpu_sparkline = CompactCpuSparklineView(vm=self.global_cpu_vm, history_length=100)
+        self.cpu_sparkline = CompactCpuSparklineView(vm=self.global_cpu_vm, display_percent=True)
         layout.addWidget(self.cpu_sparkline)
+
+        spark_and_bar_block = QWidget()
+        layout.addWidget(spark_and_bar_block)
+        spark_and_bar = QHBoxLayout()
+        spark_and_bar_block.setLayout(spark_and_bar)
+
+        spark_and_bar.addWidget(self.cpu_sparkline)
+        spark_and_bar.addWidget(self.cpu_compact_view_vert)
 
         # --- Monitoring Processus Spécifique ---
         process_layout = QHBoxLayout()

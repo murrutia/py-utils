@@ -4,7 +4,7 @@ from collections import deque
 
 import psutil
 from PySide6.QtCore import QObject, QPointF, Qt, QThread, Signal
-from PySide6.QtGui import QColor, QCursor, QPainter, QPen
+from PySide6.QtGui import QColor, QCursor, QPainter, QPalette, QPen
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -15,21 +15,20 @@ from PySide6.QtWidgets import (
 )
 
 from py_utils.misc import percent_to_rgb
-from py_utils.process import GlobalCpuMonitor, cpu_monitor
+from py_utils.stats import CpuCoresMonitor
 
 
-class GlobalCpuMonitorSignals(QObject):
+class CpuCoresMonitorSignals(QObject):
     updated = Signal(float, object)
     started = Signal()
     finished = Signal(bool, str)
 
 
-class GlobalCpuMonitorThread(QThread):
-    def __init__(self, interval: float = 0.5):
+class CpuCoresMonitorThread(QThread):
+    def __init__(self, interval: float = 0.5, history_length: int = 0):
         super().__init__()
-        self.signals = GlobalCpuMonitorSignals()
-        cpu_monitor.interval = interval
-        self.monitor = cpu_monitor
+        self.signals = CpuCoresMonitorSignals()
+        self.monitor = CpuCoresMonitor(interval=interval, history_length=history_length)
         self.monitor.add_handler_on("started", self.signals.started.emit)
         self.monitor.add_handler_on("updated", self.signals.updated.emit)
         self.monitor.add_handler_on("finished", self.signals.finished.emit)
@@ -41,13 +40,14 @@ class GlobalCpuMonitorThread(QThread):
         self.monitor.stop()
 
 
-class GlobalCpuMonitorViewModel(QObject):
+class CpuCoresMonitorViewModel(QObject):
 
-    def __init__(self, interval: float = 0.5):
+    def __init__(self, interval: float = 0.5, history_length: int = 0):
         super().__init__()
         self._interval = interval
-        self._thread: GlobalCpuMonitorThread | None = None
-        self.signals = GlobalCpuMonitorSignals()
+        self._history_length = history_length
+        self._thread: CpuCoresMonitorThread | None = None
+        self.signals = CpuCoresMonitorSignals()
 
     @property
     def interval(self):
@@ -65,7 +65,7 @@ class GlobalCpuMonitorViewModel(QObject):
         if self._thread and self._thread.isRunning():
             return
 
-        self._thread = GlobalCpuMonitorThread(self._interval)
+        self._thread = CpuCoresMonitorThread(self._interval, self._history_length)
         self._thread.signals.updated.connect(self.signals.updated.emit)
         self._thread.signals.finished.connect(self.signals.finished.emit)
         self._thread.start()
@@ -77,11 +77,17 @@ class GlobalCpuMonitorViewModel(QObject):
             self._thread = None
 
 
-class CompactGlobalCpuMonitorView(QWidget):
-    def __init__(self, vm: GlobalCpuMonitorViewModel):
+class CompactCpuCoresMonitorView(QWidget):
+    def __init__(
+        self,
+        vm: CpuCoresMonitorViewModel,
+        orientation: Qt.Orientation = Qt.Horizontal,
+        side_text: str = "right",
+    ):
         super().__init__()
         self.vm = vm
-
+        self._orientation = orientation
+        self._side_text = side_text
         self.setup_ui()
         self.setup_signals()
 
@@ -89,14 +95,26 @@ class CompactGlobalCpuMonitorView(QWidget):
         layout = QHBoxLayout()
         self.setLayout(layout)
 
+        layout.setContentsMargins(0, 0, 0, 0)
         self.label = QLabel("CPU: --.-%")
-        layout.addWidget(self.label)
 
         self.meter = QProgressBar()
         self.meter.setRange(0, 100)
         self.meter.setTextVisible(False)
-        self.meter.setMaximumHeight(12)
-        layout.addWidget(self.meter)
+        self.meter.setOrientation(self._orientation)
+        if self._orientation == Qt.Vertical:
+            self.meter.setMaximumWidth(12)
+        else:
+            self.meter.setMaximumHeight(12)
+
+        if self._side_text == "left":
+            self.label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
+            layout.addWidget(self.label)
+            layout.addWidget(self.meter)
+        else:
+            self.label.setAlignment(Qt.AlignLeft | Qt.AlignBottom)
+            layout.addWidget(self.meter)
+            layout.addWidget(self.label)
 
         self.setToolTip("En attente de données...")
 
@@ -131,19 +149,26 @@ class CompactGlobalCpuMonitorView(QWidget):
 class CompactCpuSparklineView(QWidget):
     """Affiche un mini-graphique (sparkline) de l'utilisation récente du CPU global."""
 
-    def __init__(self, vm: GlobalCpuMonitorViewModel, history_length=500):
+    def __init__(self, vm: CpuCoresMonitorViewModel, display_percent: bool = False):
         super().__init__()
         self.vm = vm
-        self.history = deque(
-            [0.0] * history_length, maxlen=history_length
-        )  # Garde les 500 dernières valeurs
+        self.display_percent = display_percent
         self.current_value = 0.0
-        self.setMinimumSize(150, 40)
-        self.setToolTip("Historique de l'utilisation CPU globale")
         self.vm.signals.updated.connect(self.on_updated)
 
+    def _update_tooltip(self):
+        """Met à jour le tooltip avec la durée de l'historique."""
+        if self.vm._thread and self.vm._thread.monitor:
+            monitor = self.vm._thread.monitor
+            if monitor.history_length > 0:
+                duration = monitor.history_length * self.vm.interval
+                self.setToolTip(
+                    f"Historique de l'utilisation CPU globale sur les {duration:.1f} dernières secondes"
+                )
+                return
+        self.setToolTip("Historique de l'utilisation CPU globale")
+
     def on_updated(self, _global: float, _cores: list[float]):
-        self.history.append(_global)
         self.current_value = _global
         self.update()  # Demande un rafraîchissement du widget
 
@@ -154,8 +179,39 @@ class CompactCpuSparklineView(QWidget):
         # Fond
         painter.fillRect(self.rect(), self.palette().color(self.backgroundRole()))
 
-        if not self.history:
+        self._update_tooltip()
+
+        # On s'assure que le thread et le moniteur existent et ont un historique
+        if not (self.vm._thread and self.vm._thread.monitor and self.vm._thread.monitor.history):
             return
+
+        history = self.vm._thread.monitor.get_cpu_history()
+        monitor = self.vm._thread.monitor
+        if not history or monitor.history_length <= 1:
+            return
+
+        # --- Configuration du dessin ---
+        w = self.width()
+        h = self.height()
+        graph_h = h
+
+        # --- Dessin des lignes de fond (grille) ---
+        # Utilise une couleur claire du thème pour les lignes, pour qu'elles soient discrètes
+        grid_color = self.palette().color(QPalette.ColorRole.Dark)
+        # On la rend semi-transparente pour qu'elle soit encore plus discrète
+        grid_color.setAlpha(100)  # Valeur entre 0 (transparent) et 255 (opaque)
+        grid_pen = QPen(grid_color)
+        grid_pen.setWidth(1)
+        painter.setPen(grid_pen)
+
+        for percent in [50, 100]:
+            # On s'assure que y est un entier pour un dessin net
+            y = int(graph_h - (percent / 100.0 * graph_h))
+            # La ligne à 100% est tout en haut (y=0), on peut la décaler de 1px pour la voir
+            # et éviter qu'elle ne soit coupée par le bord du widget.
+            if y == 0:
+                y = 1
+            painter.drawLine(0, y, w, y)
 
         # Ligne du graphique
         color = percent_to_rgb(self.current_value, return_type="tuple")
@@ -164,27 +220,62 @@ class CompactCpuSparklineView(QWidget):
         pen.setWidth(2)
         painter.setPen(pen)
 
-        w = self.width()
-        h = self.height()
         points = []
-        for i, value in enumerate(self.history):
-            x = w * i / (len(self.history) - 1) if len(self.history) > 1 else w / 2
-            y = h - (value / 100.0 * h)
+        for i, value in enumerate(history):
+            x = w * i / (monitor.history_length - 1)
+            y = graph_h - (value / 100.0 * graph_h)
             points.append(QPointF(x, y))
 
         if points:
             painter.drawPolyline(points)
 
-        # Texte de la valeur actuelle
-        painter.setPen(self.palette().color(self.foregroundRole()))
-        text = f"{self.current_value:.1f}%"
-        painter.drawText(self.rect().adjusted(5, 0, -5, -5), Qt.AlignRight | Qt.AlignBottom, text)
+        if self.display_percent:
+            # Texte de la valeur actuelle
+            painter.setPen(self.palette().color(self.foregroundRole()))
+            text = f"{self.current_value:.1f}%"
+            # On place le texte dans le coin supérieur droit de la zone du graphique
+            text_rect = self.rect().adjusted(5, 5, -5, -5)
+            painter.drawText(text_rect, Qt.AlignRight | Qt.AlignTop, text)
+
+        # --- Échelle de temps ---
+        total_seconds = monitor.history_length * self.vm.interval
+        font = painter.font()
+        font.setPointSize(font.pointSize() - 2)  # Police plus petite
+        painter.setFont(font)
+        # On utilise la même couleur que la grille pour une apparence cohérente
+        text_color = self.palette().color(QPalette.ColorRole.Dark)
+        text_color.setAlpha(150)  # Un peu moins transparent que la grille pour la lisibilité
+        painter.setPen(text_color)
+
+        # Libellé de gauche
+        left_label = f"-{int(total_seconds)}s"
+        painter.drawText(
+            self.rect().adjusted(5, h - 15, 0, 0),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            left_label,
+        )
+
+        # Libellé du milieu
+        mid_label = f"-{int(total_seconds / 2)}s"
+        painter.drawText(
+            self.rect().adjusted(0, h - 15, 0, 0),
+            Qt.AlignCenter | Qt.AlignVCenter,
+            mid_label,
+        )
+
+        # Libellé de droite
+        right_label = "0s"
+        painter.drawText(
+            self.rect().adjusted(0, h - 15, -5, 0),
+            Qt.AlignRight | Qt.AlignVCenter,
+            right_label,
+        )
 
 
 class CompactCoresHeatmapView(QWidget):
     """Affiche une grille de carrés colorés (heatmap) pour l'utilisation de chaque cœur."""
 
-    def __init__(self, vm: GlobalCpuMonitorViewModel):
+    def __init__(self, vm: CpuCoresMonitorViewModel):
         super().__init__()
         self.vm = vm
         self.num_cores = psutil.cpu_count()
@@ -264,7 +355,7 @@ class CompactCoresHeatmapView(QWidget):
 class CompactCoresMonitorView(QWidget):
     """Un widget compact affichant l'utilisation de chaque cœur CPU avec des barres de progression."""
 
-    def __init__(self, vm: GlobalCpuMonitorViewModel):
+    def __init__(self, vm: CpuCoresMonitorViewModel):
         super().__init__()
         self.vm = vm
         self.core_percents: list[float] = []
@@ -382,7 +473,7 @@ class MemoryMonitorViewModel(QObject):
 class SystemSummaryView(QWidget):
     """Un widget de synthèse affichant l'utilisation CPU, RAM et SWAP."""
 
-    def __init__(self, cpu_vm: GlobalCpuMonitorViewModel, mem_vm: MemoryMonitorViewModel):
+    def __init__(self, cpu_vm: CpuCoresMonitorViewModel, mem_vm: MemoryMonitorViewModel):
         super().__init__()
         self.cpu_vm = cpu_vm
         self.mem_vm = mem_vm

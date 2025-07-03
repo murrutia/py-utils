@@ -11,8 +11,8 @@ import time
 import psutil
 
 from py_utils.misc import CursesContext, create_progress_bar
-from py_utils.process import (
-    GlobalCpuMonitor,
+from py_utils.stats import (
+    CpuCoresMonitor,
     ProcessCpuMonitor,
     find_process_by_id_or_name,
 )
@@ -186,7 +186,7 @@ def main():
 
         display = TopLikeDisplay(cc, process_info.pid, process_info.name(), display_lock)
         proc_monitor = ProcessCpuMonitor(process_info.pid, interval=args.interval)
-        cpu_monitor = GlobalCpuMonitor(interval=args.interval)
+        cpu_monitor = CpuCoresMonitor(interval=args.interval)
 
         # Attache les callbacks de l'afficheur au moniteur
         proc_monitor.add_handler_on("started", display.on_started)
