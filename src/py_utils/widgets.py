@@ -15,39 +15,49 @@ from PySide6.QtWidgets import (
 )
 
 from py_utils.misc import percent_to_rgb
-from py_utils.stats import CpuCoresMonitor
+from py_utils.stats import BaseMonitor, CpuCoresMonitor, MemoryMonitor
 
 
-class CpuCoresMonitorSignals(QObject):
-    updated = Signal(float, object)
+class BaseMonitorSignals(QObject):
+    """Signaux de base pour les moniteurs."""
+
     started = Signal()
     finished = Signal(bool, str)
+    # signal `updated` à définir dans les sous-classes
 
 
-class CpuCoresMonitorThread(QThread):
-    def __init__(self, interval: float = 0.5, history_length: int = 0):
+class BaseMonitorThread(QThread):
+    """Thread de base pour exécuter un moniteur de `py_utils.stats`."""
+
+    def __init__(self, monitor: BaseMonitor, signals: QObject):
         super().__init__()
-        self.signals = CpuCoresMonitorSignals()
-        self.monitor = CpuCoresMonitor(interval=interval, history_length=history_length)
+        self.monitor = monitor
+        self.signals = signals
+
         self.monitor.add_handler_on("started", self.signals.started.emit)
         self.monitor.add_handler_on("updated", self.signals.updated.emit)
         self.monitor.add_handler_on("finished", self.signals.finished.emit)
 
     def run(self):
+        """Démarre la boucle de surveillance du moniteur."""
         self.monitor.start()
 
     def stop(self):
+        """Arrête la boucle de surveillance du moniteur."""
         self.monitor.stop()
 
 
-class CpuCoresMonitorViewModel(QObject):
+class BaseMonitorViewModel(QObject):
+    """ViewModel de base pour gérer un moniteur via un thread."""
 
-    def __init__(self, interval: float = 0.5, history_length: int = 0):
+    def __init__(self, interval: float, history_length: int = 0):
         super().__init__()
         self._interval = interval
         self._history_length = history_length
-        self._thread: CpuCoresMonitorThread | None = None
-        self.signals = CpuCoresMonitorSignals()
+        self._thread: BaseMonitorThread | None = None
+
+    def _create_thread(self) -> BaseMonitorThread:
+        raise NotImplementedError("Cette méthode doit être implémentée dans une sous-classe.")
 
     @property
     def interval(self):
@@ -65,7 +75,8 @@ class CpuCoresMonitorViewModel(QObject):
         if self._thread and self._thread.isRunning():
             return
 
-        self._thread = CpuCoresMonitorThread(self._interval, self._history_length)
+        self._thread = self._create_thread()
+        self._thread.signals.started.connect(self.signals.started.emit)
         self._thread.signals.updated.connect(self.signals.updated.emit)
         self._thread.signals.finished.connect(self.signals.finished.emit)
         self._thread.start()
@@ -77,6 +88,60 @@ class CpuCoresMonitorViewModel(QObject):
             self._thread = None
 
 
+#
+# CPU Cores Monitor classes
+#
+class CpuCoresMonitorSignals(BaseMonitorSignals):
+    updated = Signal(float, object)
+
+
+class CpuCoresMonitorThread(BaseMonitorThread):
+    def __init__(self, interval: float = 0.5, history_length: int = 0):
+        monitor = CpuCoresMonitor(interval=interval, history_length=history_length)
+        signals = CpuCoresMonitorSignals()
+        super().__init__(monitor, signals)
+
+
+class CpuCoresMonitorViewModel(BaseMonitorViewModel):
+
+    def __init__(self, interval: float = 0.5, history_length: int = 0):
+        super().__init__(interval, history_length)
+        self.signals = CpuCoresMonitorSignals()
+
+    def _create_thread(self) -> CpuCoresMonitorThread:
+        return CpuCoresMonitorThread(interval=self._interval, history_length=self._history_length)
+
+
+#
+# Memory Monitor classes
+#
+class MemoryMonitorSignals(BaseMonitorSignals):
+    updated = Signal(object, object)  # virtual_memory, swap_memory
+
+
+class MemoryMonitorThread(BaseMonitorThread):
+    """Thread pour surveiller l'utilisation de la RAM et du SWAP."""
+
+    def __init__(self, interval: float = 2.0, history_length: int = 0):
+        monitor = MemoryMonitor(interval=interval, history_length=history_length)
+        signals = MemoryMonitorSignals()
+        super().__init__(monitor, signals)
+
+
+class MemoryMonitorViewModel(BaseMonitorViewModel):
+    """ViewModel pour le moniteur de mémoire."""
+
+    def __init__(self, interval: float = 2.0, history_length: int = 0):
+        super().__init__(interval, history_length)
+        self.signals = MemoryMonitorSignals()
+
+    def _create_thread(self) -> MemoryMonitorThread:
+        return MemoryMonitorThread(self._interval, self._history_length)
+
+
+#
+# Compact Views
+#
 class CompactCpuCoresMonitorView(QWidget):
     def __init__(
         self,
@@ -97,15 +162,18 @@ class CompactCpuCoresMonitorView(QWidget):
 
         layout.setContentsMargins(0, 0, 0, 0)
         self.label = QLabel("CPU: --.-%")
+        # self.label.setFixedWidth(75)
 
         self.meter = QProgressBar()
         self.meter.setRange(0, 100)
         self.meter.setTextVisible(False)
         self.meter.setOrientation(self._orientation)
-        if self._orientation == Qt.Vertical:
-            self.meter.setMaximumWidth(12)
-        else:
+        if self._orientation == Qt.Horizontal:
             self.meter.setMaximumHeight(12)
+            if self._side_text == "right":
+                self.meter.setInvertedAppearance(True)
+        else:
+            self.meter.setMaximumWidth(12)
 
         if self._side_text == "left":
             self.label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
@@ -155,21 +223,27 @@ class CompactCpuSparklineView(QWidget):
         self.display_percent = display_percent
         self.current_value = 0.0
         self.vm.signals.updated.connect(self.on_updated)
+        self.setToolTip("En attente de données...")
 
-    def _update_tooltip(self):
-        """Met à jour le tooltip avec la durée de l'historique."""
-        if self.vm._thread and self.vm._thread.monitor:
-            monitor = self.vm._thread.monitor
-            if monitor.history_length > 0:
-                duration = monitor.history_length * self.vm.interval
-                self.setToolTip(
-                    f"Historique de l'utilisation CPU globale sur les {duration:.1f} dernières secondes"
-                )
-                return
-        self.setToolTip("Historique de l'utilisation CPU globale")
+    def _update_tooltip(self, cpu, cores):
+        # Ne rafraîchir le tooltip que s'il est déjà visible
+        if self.underMouse() and QToolTip.isVisible():
+            color = percent_to_rgb(cpu, return_type="hexa")
+            # Formatter le texte de l'infobulle avec les détails par cœur
+            tooltip_text = f"<b>Utilisation CPU Globale: <span style='color: {color}'>{cpu:.1f}%</span></b><br><hr>"
+            tooltip_text += "<br>".join(
+                [
+                    f"Cœur {i+1}: <span style='color: {percent_to_rgb(p, return_type='hexa')}'>{p:.1f}%</span>"
+                    for i, p in enumerate(cores)
+                ]
+            )
+            self.setToolTip(tooltip_text)
+            # Si le curseur ne bouge pas, le texte du tooltip n'est pas rafraîchi par self.setToolTip
+            QToolTip.showText(QCursor.pos(), self.toolTip(), self)
 
-    def on_updated(self, _global: float, _cores: list[float]):
-        self.current_value = _global
+    def on_updated(self, cpu: float, cores: list[float]):
+        self.current_value = cpu
+        self._update_tooltip(cpu, cores)
         self.update()  # Demande un rafraîchissement du widget
 
     def paintEvent(self, event):
@@ -178,8 +252,6 @@ class CompactCpuSparklineView(QWidget):
 
         # Fond
         painter.fillRect(self.rect(), self.palette().color(self.backgroundRole()))
-
-        self._update_tooltip()
 
         # On s'assure que le thread et le moniteur existent et ont un historique
         if not (self.vm._thread and self.vm._thread.monitor and self.vm._thread.monitor.history):
@@ -231,9 +303,13 @@ class CompactCpuSparklineView(QWidget):
 
         if self.display_percent:
             # Texte de la valeur actuelle
-            painter.setPen(self.palette().color(self.foregroundRole()))
-            text = f"{self.current_value:.1f}%"
             # On place le texte dans le coin supérieur droit de la zone du graphique
+            painter.setPen(self.palette().color(self.foregroundRole()))
+            text_rect = self.rect().adjusted(5, 5, -47, -5)
+            painter.drawText(text_rect, Qt.AlignRight | Qt.AlignTop, "CPU :")
+
+            painter.setPen(QColor.fromRgb(*color))
+            text = f"{self.current_value:.1f}%"
             text_rect = self.rect().adjusted(5, 5, -5, -5)
             painter.drawText(text_rect, Qt.AlignRight | Qt.AlignTop, text)
 
@@ -418,56 +494,6 @@ class CompactCoresMonitorView(QWidget):
 
         if not found_core:
             self.setToolTip("")
-
-
-class MemoryMonitorSignals(QObject):
-    """Signaux pour le moniteur de mémoire."""
-
-    updated = Signal(object, object)  # virtual_memory, swap_memory
-
-
-class MemoryMonitorThread(QThread):
-    """Thread pour surveiller l'utilisation de la RAM et du SWAP."""
-
-    def __init__(self, interval: float = 2.0):
-        super().__init__()
-        self.interval = interval
-        self.signals = MemoryMonitorSignals()
-        self._is_running = False
-
-    def run(self):
-        self._is_running = True
-        while self._is_running:
-            vmem = psutil.virtual_memory()
-            swap = psutil.swap_memory()
-            self.signals.updated.emit(vmem, swap)
-            time.sleep(self.interval)
-
-    def stop(self):
-        self._is_running = False
-
-
-class MemoryMonitorViewModel(QObject):
-    """ViewModel pour le moniteur de mémoire."""
-
-    def __init__(self, interval: float = 2.0):
-        super().__init__()
-        self._interval = interval
-        self._thread: MemoryMonitorThread | None = None
-        self.signals = MemoryMonitorSignals()
-
-    def start(self):
-        if self._thread and self._thread.isRunning():
-            return
-        self._thread = MemoryMonitorThread(self._interval)
-        self._thread.signals.updated.connect(self.signals.updated.emit)
-        self._thread.start()
-
-    def stop(self):
-        if self._thread:
-            self._thread.stop()
-            self._thread.wait()
-            self._thread = None
 
 
 class SystemSummaryView(QWidget):

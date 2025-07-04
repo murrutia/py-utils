@@ -212,6 +212,41 @@ class CpuCoresMonitor(BaseMonitor):
         return [b for a, b in self.history]
 
 
+class MemoryMonitor(BaseMonitor):
+    """Observation de l'utilisation de la mémoire (RAM et SWAP).
+
+    Les handlers pour les différents événements doivent avoir les signatures suivantes :
+
+    - MonitorEvent.STARTED: `Callable[[], None]`
+    - MonitorEvent.UPDATED: `Callable[[psutil._common.snetio, psutil._common.sswap], None]`
+      Arguments:
+        vmem (psutil._common.snetio) - Informations sur la mémoire virtuelle.
+        swap (psutil._common.sswap) - Informations sur la mémoire swap.
+
+    - MonitorEvent.FINISHED: `Callable[[bool, str], None]`
+    """
+
+    def __init__(self, interval: float = 2.0, history_length: int = 0):
+        """
+        Initialise le moniteur de mémoire.
+        """
+        super().__init__(interval, history_length)
+
+    def _setup(self):
+        """Émet l'événement de démarrage."""
+        self._apply_handlers_on(MonitorEvent.STARTED)
+
+    def _run_loop(self):
+        """Boucle de surveillance pour la mémoire."""
+        while self._is_running:
+            vmem = psutil.virtual_memory()
+            swap = psutil.swap_memory()
+            self._apply_handlers_on(MonitorEvent.UPDATED, vmem, swap)
+            time.sleep(self.interval)
+            if not self._is_running:
+                break
+
+
 class ProcessCpuMonitor(BaseMonitor):
     """Observation de l'utilisation du CPU d'un processus spécifique.
 

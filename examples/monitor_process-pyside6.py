@@ -312,6 +312,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.cpu_sparkline)
 
         spark_and_bar_block = QWidget()
+        spark_and_bar_block.setMaximumHeight(100)
         layout.addWidget(spark_and_bar_block)
         spark_and_bar = QHBoxLayout()
         spark_and_bar_block.setLayout(spark_and_bar)
