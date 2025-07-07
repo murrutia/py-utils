@@ -18,7 +18,10 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "black>=25.1.0",
+    "numpy>=2.3.1",
+    "opencv-python>=4.11.0.86",
     "pyside6-essentials>=6.9.1",
     "python-dateutil>=2.9.0.post0",
+    "requests>=2.32.4",
     "tqdm>=4.67.1",
 ]

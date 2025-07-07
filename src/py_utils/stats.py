@@ -246,12 +246,18 @@ class MemoryMonitor(BaseMonitor):
             if not self._is_running:
                 break
 
+    def get_ram_history(self):
+        return [vmem.percent for vmem, swap in self.history]
 
-class ProcessCpuMonitor(BaseMonitor):
+    def get_swap_history(self):
+        return [swap.percent for vmem, swap in self.history]
+
+
+class ProcessMonitor(BaseMonitor):
     """Observation de l'utilisation du CPU d'un processus spécifique.
 
     Les handlers pour les différents événements doivent avoir les signatures suivantes :
-    - MonitorEvent.STARTED: `Callable[[int, str], None]` (pid, name)
+    - MonitorEvent.STARTED: `Callable[[], None]`
     - MonitorEvent.UPDATED: `Callable[[float], None]` (proc_cpu_percent)
     - MonitorEvent.FINISHED: `Callable[[bool, str], None]`
     """
@@ -267,7 +273,7 @@ class ProcessCpuMonitor(BaseMonitor):
         self._proc = psutil.Process(self._pid)
         # Le premier appel retourne 0.0, on l'utilise pour initialiser.
         self._proc.cpu_percent(interval=None)
-        self._apply_handlers_on(MonitorEvent.STARTED, self._proc.pid, self._proc.name())
+        self._apply_handlers_on(MonitorEvent.STARTED)
 
     def _run_loop(self):
         """Boucle de surveillance pour le CPU du processus."""
@@ -287,3 +293,8 @@ class ProcessCpuMonitor(BaseMonitor):
     def get_pid(self) -> int:
         """Retourne le PID du processus surveillé."""
         return self._pid
+
+    def get_name(self) -> str:
+        if self._proc:
+            return self._proc.name()
+        return ""

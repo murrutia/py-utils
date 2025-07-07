@@ -80,92 +80,6 @@ class ProcessMonitorView(QWidget):
         )
 
 
-class CpuCoresMonitorView(QWidget):
-    def __init__(self, vm: CpuCoresMonitorViewModel):
-        super().__init__()
-        self.vm = vm
-
-        self.setup_ui()
-        self.setup_signals()
-
-    def setup_ui(self):
-        layout = QVBoxLayout()
-        self.setLayout(layout)
-
-        self.message = QLabel("Coin messages")
-        layout.addWidget(self.message)
-
-        self._setup_cpu_cores()
-        self._setup_global_cpu()
-
-    def _setup_global_cpu(self):
-        layout = self.layout()
-
-        cpu_global_block = QWidget()
-        layout.addWidget(cpu_global_block)
-        cpu_global = QHBoxLayout()
-        cpu_global_block.setLayout(cpu_global)
-
-        cpu_name = QLabel("CPU Global")
-        cpu_global.addWidget(cpu_name)
-
-        self.cpu_global_value = QLabel("0.0%")
-        self.cpu_global_value.setMinimumWidth(40)
-        cpu_global.addWidget(self.cpu_global_value)
-
-        self.cpu_global_meter = QProgressBar()
-        self.cpu_global_meter.setRange(0, 100)
-        self.cpu_global_meter.setOrientation(Qt.Horizontal)
-        cpu_global.addWidget(self.cpu_global_meter)
-
-    def _setup_cpu_cores(self):
-        layout = self.layout()
-
-        cpu_cores_block = QWidget()
-        cpu_cores_block.setMaximumHeight(150)
-        layout.addWidget(cpu_cores_block)
-
-        cpu_cores = QHBoxLayout()
-        cpu_cores_block.setLayout(cpu_cores)
-
-        block_title = QLabel("CPU Cores")
-        cpu_cores.addWidget(block_title)
-
-        self.cpu_cores = []
-        for i in range(psutil.cpu_count()):
-            cpu_core = {}
-
-            cpu_core_block = QVBoxLayout()
-            cpu_cores.addLayout(cpu_core_block)
-
-            meter = QProgressBar()
-            meter.setRange(0, 100)
-            meter.setOrientation(Qt.Vertical)
-            cpu_core_block.addWidget(meter)
-            cpu_core["meter"] = meter
-
-            value = QLabel("0.0%")
-            cpu_core_block.addWidget(value)
-            cpu_core["value"] = value
-
-            cpu_name = QLabel(f"Core {i+1}")
-            cpu_core_block.addWidget(cpu_name)
-
-            self.cpu_cores.append(cpu_core)
-
-    def setup_signals(self):
-        self.vm.signals.updated.connect(self.on_updated)
-        self.vm.signals.finished.connect(lambda success, message: self.message.setText(message))
-
-    def on_updated(self, value: float, percents: list[float]):
-        self.cpu_global_value.setText(f"{value:.1f}%")
-        self.cpu_global_meter.setValue(int(value))
-
-        for i, core_percent in enumerate(percents):
-            self.cpu_cores[i]["value"].setText(f"{core_percent:.1f}%")
-            self.cpu_cores[i]["meter"].setValue(int(core_percent))
-
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -195,36 +109,8 @@ class MainWindow(QMainWindow):
         self.system_summary_view = SystemSummaryView(
             cpu_vm=self.global_cpu_vm, mem_vm=self.memory_vm
         )
-        # layout.addWidget(self.system_summary_view)
-
-        # --- Monitoring CPU Global ---
-
-        # Vue pour le CPU Global
-        # self.cpu_globalwt(self.cpu_global_view)
-
-        # self.cpu_compact_view = CompactCpuCoresMonitorView(vm=self.global_cpu_vm)
-        # layout.addWidget(self.cpu_compact_view)
-
-        # self.cpu_compact_view_vert = CompactCpuCoresMonitorView(
-        #     vm=self.global_cpu_vm, orientation=Qt.Vertical
-        # )
-        # layout.addWidget(self.cpu_compact_view_vert)
-
-        # self.cores_compact_view = CompactCoresMonitorView(vm=self.global_cpu_vm)
-        # # self.cores_compact_view.setMaximumWidth(200)
-        # layout.addWidget(self.cores_compact_view)
-
-        # self.cores_heatmap = CompactCoresHeatmap2View(vm=self.global_cpu_vm)
-        # # self.cores_heatmap.setFixedSize(100, 20)
-        # layout.addWidget(self.cores_heatmap)
-
         self.cpu_sparkline = CompactCpuSparklineView(vm=self.global_cpu_vm, display_percent=True)
-        # layout.addWidget(self.cpu_sparkline)
-
-        # layout.addWidget(QHorizontalLine())
-        # self.memory_sparkline = CompactMemorySparklineView(vm=self.memory_vm)
-        # layout.addWidget(self.memory_sparkline)
-        # layout.addWidget(QHorizontalLine())
+        self.cores_compact_view = CompactCoresMonitorView(vm=self.global_cpu_vm)
 
         spark_and_bar_block = QWidget()
         spark_and_bar_block.setMaximumHeight(100)
@@ -232,26 +118,27 @@ class MainWindow(QMainWindow):
         spark_and_bar = QHBoxLayout()
         spark_and_bar_block.setLayout(spark_and_bar)
 
+        spark_and_bar.addWidget(self.cores_compact_view, 1)
         spark_and_bar.addWidget(self.cpu_sparkline, 2)
         spark_and_bar.addWidget(self.system_summary_view, 1)
 
         # # --- Monitoring Processus Spécifique ---
-        # process_layout = QHBoxLayout()
-        # layout.addLayout(process_layout)
+        process_layout = QHBoxLayout()
+        layout.addLayout(process_layout)
 
         self.process_vm = ProcessMonitorViewModel(process_identifier=self.worker_process.pid)
-        # self.cpu_process_view = ProcessMonitorView(vm=self.process_vm)
-        # process_layout.addWidget(self.cpu_process_view, 1)  # Donne plus de place à la vue
+        self.cpu_process_view = ProcessMonitorView(vm=self.process_vm)
+        process_layout.addWidget(self.cpu_process_view, 1)  # Donne plus de place à la vue
 
-        # # Ajout des boutons de contrôle
-        # self.pause_button = QPushButton("Pause")
-        # self.pause_button.clicked.connect(self.on_pause_process)
-        # process_layout.addWidget(self.pause_button)
+        # Ajout des boutons de contrôle
+        self.pause_button = QPushButton("Pause")
+        self.pause_button.clicked.connect(self.on_pause_process)
+        process_layout.addWidget(self.pause_button)
 
-        # self.resume_button = QPushButton("Resume")
-        # self.resume_button.clicked.connect(self.on_resume_process)
-        # self.resume_button.setEnabled(False)  # Le processus démarre en cours d'exécution
-        # process_layout.addWidget(self.resume_button)
+        self.resume_button = QPushButton("Resume")
+        self.resume_button.clicked.connect(self.on_resume_process)
+        self.resume_button.setEnabled(False)  # Le processus démarre en cours d'exécution
+        process_layout.addWidget(self.resume_button)
 
         # On démarre les moniteurs
         self.global_cpu_vm.start()
