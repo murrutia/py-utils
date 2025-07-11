@@ -364,10 +364,6 @@ class CompactCpuSparklineView(QWidget):
         for percent in [50, 100]:
             # On s'assure que y est un entier pour un dessin net
             y = int(graph_h - (percent / 100.0 * graph_h))
-            # La ligne à 100% est tout en haut (y=0), on peut la décaler de 1px pour la voir
-            # et éviter qu'elle ne soit coupée par le bord du widget.
-            if y == 0:
-                y = 1
             painter.drawLine(0, y, w, y)
 
         # Ligne du graphique

@@ -1,10 +1,9 @@
-import dis
 import multiprocessing
 import sys
 
 import psutil
-from PySide6.QtCore import QObject, Qt, QThread, Signal
-from PySide6.QtGui import QCloseEvent, QCursor
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -12,24 +11,17 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QProgressBar,
     QPushButton,
-    QToolTip,
     QVBoxLayout,
     QWidget,
 )
 
 from py_utils.misc import percent_to_rgb
-from py_utils.stats import CpuCoresMonitor, ProcessMonitor, find_process_by_id_or_name
 from py_utils.widgets import (
-    CompactCoresHeatmap2View,
-    CompactCoresHeatmapView,
     CompactCoresMonitorView,
-    CompactCpuCoresMonitorView,
     CompactCpuSparklineView,
-    CompactMemorySparklineView,
     CpuCoresMonitorViewModel,
     MemoryMonitorViewModel,
     ProcessMonitorViewModel,
-    QHorizontalLine,
     SystemSummaryView,
 )
 
@@ -188,6 +180,9 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    # Nécessaire pour PyInstaller lors de l'utilisation de multiprocessing
+    multiprocessing.freeze_support()
+
     app = QApplication(sys.argv)
 
     # Appliquer un style global pour les tooltips.
